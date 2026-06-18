@@ -1,0 +1,228 @@
+# =============================================================================
+# Medical Q&A LLM Fine-Tuning — Central Configuration
+# =============================================================================
+# All hyperparameters live here so you never have to edit Python code to tweak
+# an experiment. Every value is documented with WHY it was chosen.
+#
+# USAGE:
+#   import yaml
+#   with open("config.yaml") as f:
+#       config = yaml.safe_load(f)
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+# WHY Mistral-7B-v0.3:
+#   - v0.1 was retired March 2025. v0.3 has extended vocabulary (32,768 tokens),
+#     improved tokenizer, and function-calling support.
+#   - 7B params is the sweet spot for Colab T4: large enough to be useful,
+#     small enough to fit in 16GB VRAM with 4-bit quantization.
+model_name: "mistralai/Mistral-7B-v0.3"
+
+# WHY 512 tokens:
+#   - Most medical Q&A pairs are 100-300 tokens. 512 gives headroom without
+#     risking OOM on T4. Going to 1024 is possible but tight on memory.
+#   - Shorter sequences = faster training = more iterations per hour.
+max_seq_length: 512
+
+# ---------------------------------------------------------------------------
+# QLoRA / BitsAndBytes Quantization
+# ---------------------------------------------------------------------------
+# WHY 4-bit quantization:
+#   - Mistral 7B in fp16 = ~14GB VRAM (won't fit on T4 with optimizer states).
+#   - 4-bit QLoRA reduces model to ~4GB, leaving room for activations/gradients.
+#   - QLoRA paper (Dettmers et al., 2023) showed 4-bit matches 16-bit performance.
+load_in_4bit: true
+
+# WHY NF4 (NormalFloat4):
+#   - Neural network weights follow a roughly Gaussian distribution.
+#   - NF4 is information-theoretically optimal for normally-distributed values,
+#     outperforming standard FP4 by ~0.5 perplexity points.
+bnb_4bit_quant_type: "nf4"
+
+# WHY double quantization:
+#   - Quantizes the quantization constants themselves, saving ~0.4GB VRAM
+#     with zero impact on model quality. Free lunch.
+bnb_4bit_use_double_quant: true
+
+# WHY float16 (NOT bfloat16):
+#   - T4 GPU (Turing architecture, compute capability 7.5) does NOT have
+#     native bfloat16 support. Using bf16 on T4 emulates it in software,
+#     which is slower and can cause numerical issues.
+#   - IMPORTANT: Many online tutorials assume A100/L4 GPUs and use bf16.
+#     This is a common source of silent failures on T4.
+bnb_4bit_compute_dtype: "float16"
+
+# ---------------------------------------------------------------------------
+# LoRA (Low-Rank Adaptation)
+# ---------------------------------------------------------------------------
+# WHY LoRA:
+#   - Full fine-tuning of 7B params needs >50GB VRAM — impossible on T4.
+#   - LoRA adds small trainable matrices (rank r) to frozen weight matrices.
+#   - With r=16 across all layers, we train ~20M params (0.3% of total),
+#     achieving 97%+ of full fine-tuning performance.
+#   - LoRA paper: Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models" (2021)
+
+# WHY r=16:
+#   - r=8 is too low for complex instruction-following tasks.
+#   - r=16 is the community standard for 7B models on consumer GPUs.
+#   - r=32 or r=64 would be better but risks OOM on T4.
+lora_r: 16
+
+# WHY alpha=32 (2x rank):
+#   - The scaling factor alpha/r controls update magnitude. alpha=2*r is the
+#     standard heuristic from the LoRA paper.
+#   - Too low = underfitting (updates too small). Too high = training instability.
+lora_alpha: 32
+
+# WHY dropout=0.05:
+#   - Light regularization to prevent overfitting, especially important with
+#     small-to-medium datasets (~34K rows).
+#   - 0.0 = no regularization, 0.1 = aggressive. 0.05 is the safe middle ground.
+lora_dropout: 0.05
+
+# WHY all 7 linear layers (not just q_proj, v_proj):
+#   - Original LoRA paper only targeted attention (q_proj, v_proj).
+#   - 2024-2025 empirical results show targeting ALL linear layers (including
+#     MLP: gate_proj, up_proj, down_proj) dramatically improves instruction-following.
+#   - The VRAM overhead under QLoRA is minimal because only LoRA params are in fp16;
+#     base weights remain in 4-bit.
+lora_target_modules:
+  - "q_proj"
+  - "k_proj"
+  - "v_proj"
+  - "o_proj"
+  - "gate_proj"
+  - "up_proj"
+  - "down_proj"
+
+# ---------------------------------------------------------------------------
+# Dataset
+# ---------------------------------------------------------------------------
+# WHY medalpaca/medical_meadow_medical_flashcards:
+#   - 33,955 rows: large enough for meaningful learning, small enough for T4.
+#   - Already in Alpaca instruction format (instruction/input/output).
+#   - Medical student flashcard content — high quality, factual.
+#   - Part of the well-known MedAlpaca project (peer-reviewed).
+#   - Freely accessible, no gating or approval required.
+dataset_name: "medalpaca/medical_meadow_medical_flashcards"
+
+# WHY these split ratios:
+#   - 85/10/5 is standard for medium datasets.
+#   - 10% val (~3,400 rows) is enough for reliable loss curves.
+#   - 5% test (~1,700 rows) is enough for evaluation metrics.
+val_split_ratio: 0.1
+test_split_ratio: 0.05
+
+# ---------------------------------------------------------------------------
+# Training Arguments
+# ---------------------------------------------------------------------------
+# WHY 1 epoch:
+#   - LoRA adapters converge fast. On ~29K training rows, 1 epoch is typically
+#     sufficient. More epochs risk overfitting (adapter memorizes training data).
+#   - Can increase to 2-3 if validation loss is still decreasing after epoch 1.
+num_train_epochs: 1
+
+# WHY batch_size=1 + gradient_accumulation=4:
+#   - A single Mistral 7B forward pass with 512 tokens uses ~10-12GB VRAM.
+#   - Batch size > 1 causes OOM on T4 (16GB total).
+#   - Gradient accumulation simulates batch_size=4 without extra VRAM.
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 4
+
+# WHY lr=2e-4:
+#   - QLoRA needs higher LR than full fine-tuning because only a tiny fraction
+#     of parameters are being updated.
+#   - 2e-4 is the standard from the QLoRA paper. Range: 1e-4 to 5e-4.
+learning_rate: 2.0e-4
+
+# WHY cosine scheduler:
+#   - Gradually reduces LR following a cosine curve. Gives the model a strong
+#     start (high LR) and a gentle finish (low LR near convergence).
+#   - Empirically outperforms linear decay for single-epoch runs.
+lr_scheduler_type: "cosine"
+
+# WHY 3% warmup:
+#   - Prevents gradient explosions in the first few steps when the model
+#     hasn't yet stabilized. 3-10% is standard practice.
+warmup_ratio: 0.03
+
+# WHY max_grad_norm=0.3:
+#   - Aggressive gradient clipping prevents training instability.
+#   - 0.3 is the QLoRA paper's recommendation. Default (1.0) can cause
+#     loss spikes with 4-bit quantized models.
+max_grad_norm: 0.3
+
+# WHY weight_decay=0.01:
+#   - Light L2 regularization. Prevents overfitting without slowing convergence.
+weight_decay: 0.01
+
+# WHY paged_adamw_32bit:
+#   - Standard AdamW stores 2 optimizer states per parameter (momentum + variance).
+#   - "Paged" variant offloads optimizer states to CPU RAM during memory spikes,
+#     preventing OOM crashes during gradient accumulation steps.
+#   - 32bit because T4 doesn't support bf16 optimizer states.
+optim: "paged_adamw_32bit"
+
+# WHY fp16=True, bf16=False:
+#   - T4 GPU (Turing, compute capability 7.5) has native fp16 support but
+#     NO native bf16 support.
+#   - Using bf16=True on T4 causes silent performance degradation or errors.
+fp16: true
+bf16: false
+
+# WHY gradient checkpointing:
+#   - Trades ~20% training speed for massive VRAM savings (~40% reduction).
+#   - Without this, Mistral 7B + QLoRA will OOM on T4 during backward pass.
+#   - ESSENTIAL, not optional, on 16GB GPUs.
+gradient_checkpointing: true
+
+# WHY packing=False:
+#   - Packing concatenates short examples to fill max_seq_length, improving
+#     GPU utilization. BUT it can blend unrelated examples, which hurts
+#     Q&A-style tasks where boundaries matter.
+#   - Set to True if training is too slow and you accept the quality tradeoff.
+packing: false
+
+# Logging: save loss every 10 steps for smooth training curves.
+logging_steps: 10
+save_strategy: "epoch"
+output_dir: "./results"
+
+# Seed for reproducibility.
+seed: 42
+
+# ---------------------------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------------------------
+# WHY 100 samples:
+#   - Full test set evaluation (~1,700 rows) takes 2-4 hours with generation.
+#   - 100 samples gives statistically meaningful metrics in ~15-20 minutes.
+#   - For the final README, you can re-run with more samples overnight.
+num_eval_samples: 100
+
+# Number of side-by-side examples to save for qualitative analysis.
+num_qualitative_examples: 10
+
+# Generation parameters for evaluation.
+eval_max_new_tokens: 256
+eval_temperature: 0.1
+eval_top_p: 0.9
+eval_do_sample: true
+
+# ---------------------------------------------------------------------------
+# Merging & Export
+# ---------------------------------------------------------------------------
+merged_model_dir: "./merged_model"
+push_to_hub: false
+hub_model_id: ""  # e.g., "your-username/medical-qa-mistral-7b-qlora"
+
+# ---------------------------------------------------------------------------
+# Gradio App
+# ---------------------------------------------------------------------------
+app_title: "🏥 Medical Q&A Assistant"
+app_description: "Fine-tuned Mistral 7B for medical question answering"
+app_max_new_tokens: 512
+app_temperature: 0.7
+app_top_p: 0.9

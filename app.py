@@ -251,14 +251,16 @@ def load_model_and_tokenizer(
     if os.path.isdir(merged_dir):
         logger.info(f"Loading merged model from {merged_dir}/...")
         try:
-            tokenizer = AutoTokenizer.from_pretrained(merged_dir)
+            tokenizer = AutoTokenizer.from_pretrained(
+                merged_dir, trust_remote_code=True
+            )
 
             if device == "cuda":
                 model = _load_quantized(merged_dir, config)
             else:
                 model = AutoModelForCausalLM.from_pretrained(
                     merged_dir,
-                    torch_dtype=torch.float32,
+                    torch_dtype=torch.float16,
                     device_map="cpu",
                     low_cpu_mem_usage=True,
                 )
@@ -277,14 +279,16 @@ def load_model_and_tokenizer(
         try:
             from peft import PeftModel
 
-            tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+            tokenizer = AutoTokenizer.from_pretrained(
+                base_model_name, trust_remote_code=True
+            )
 
             if device == "cuda":
                 base_model = _load_quantized(base_model_name, config)
             else:
                 base_model = AutoModelForCausalLM.from_pretrained(
                     base_model_name,
-                    torch_dtype=torch.float32,
+                    torch_dtype=torch.float16,
                     device_map="cpu",
                     low_cpu_mem_usage=True,
                 )
@@ -308,14 +312,16 @@ def load_model_and_tokenizer(
         "Answers will be lower quality. Run training first for best results."
     )
     try:
-        tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+        tokenizer = AutoTokenizer.from_pretrained(
+            base_model_name, trust_remote_code=True
+        )
 
         if device == "cuda":
             model = _load_quantized(base_model_name, config)
         else:
             model = AutoModelForCausalLM.from_pretrained(
                 base_model_name,
-                torch_dtype=torch.float32,
+                torch_dtype=torch.float16,
                 device_map="cpu",
                 low_cpu_mem_usage=True,
             )
@@ -512,7 +518,7 @@ def build_interface(config: Dict[str, Any]) -> gr.Blocks:
         font=gr.themes.GoogleFont("Inter"),
     )
 
-    with gr.Blocks(theme=theme, title=app_title) as demo:
+    with gr.Blocks(theme=theme) as demo:
         # --- Header ---
         gr.Markdown(f"# {app_title}")
         gr.Markdown(f"*{app_description}*")
@@ -550,7 +556,6 @@ def build_interface(config: Dict[str, Any]) -> gr.Blocks:
                     lines=10,
                     max_lines=20,
                     interactive=False,
-                    show_copy_button=True,
                 )
 
                 # --- Generation Parameter Sliders ---
@@ -726,6 +731,7 @@ def main() -> None:
         server_name="0.0.0.0",  # Accept connections from any IP (needed for Spaces/Colab)
         server_port=args.port,
         share=args.share,
+        title=config.get("app_title", "Medical Q&A Assistant"),
     )
 
 

@@ -24,7 +24,7 @@ tags:
 
 ### Fine-tuning Mistral 7B for Medical Question Answering using Parameter-Efficient Adaptation
 
-[![HuggingFace Spaces](https://img.shields.io/badge/🤗%20Demo-HuggingFace%20Spaces-yellow)](https://huggingface.co/spaces/Krishna27S/medical-qa-mistral)
+[![HuggingFace Spaces](https://img.shields.io/badge/🤗%20Demo-HuggingFace%20Spaces-yellow)](https://huggingface.co/spaces/YOUR_USERNAME/medical-qa-mistral)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)](https://python.org)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 [![Fine-tuned on](https://img.shields.io/badge/Dataset-MedAlpaca%20Flashcards-orange)](https://huggingface.co/datasets/medalpaca/medical_meadow_medical_flashcards)
@@ -297,7 +297,7 @@ Where:
 
 > **TODO**: Deploy to HuggingFace Spaces and update this link.
 
-🔗 **[Try the Live Demo on HuggingFace Spaces](https://huggingface.co/spaces/Krishna27S/medical-qa-mistral)**
+🔗 **[Try the Live Demo on HuggingFace Spaces](https://huggingface.co/spaces/YOUR_USERNAME/medical-qa-mistral)**
 
 The demo runs on [HuggingFace Spaces](https://huggingface.co/spaces) with CPU inference (slower but free).
 
@@ -315,7 +315,7 @@ The demo runs on [HuggingFace Spaces](https://huggingface.co/spaces) with CPU in
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Krishna27S/medical-qa-llm.git
+git clone https://github.com/YOUR_USERNAME/medical-qa-llm.git
 cd medical-qa-llm
 
 # 2. Install dependencies
@@ -422,6 +422,6 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 *If you found this useful, give it a ⭐ on GitHub!*
 
-[Report Issues](https://github.com/Krishna27S/medical-qa-llm/issues) · [View Demo](https://huggingface.co/spaces/Krishna27S/medical-qa-mistral)
+[Report Issues](https://github.com/YOUR_USERNAME/medical-qa-llm/issues) · [View Demo](https://huggingface.co/spaces/YOUR_USERNAME/medical-qa-mistral)
 
 </div>

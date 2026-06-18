@@ -1,0 +1,62 @@
+# =============================================================================
+# Medical Q&A LLM Fine-Tuning — .gitignore
+# =============================================================================
+
+# --- Model Checkpoints & Outputs ---
+# These are large (multi-GB) and should not be in version control.
+# Push final models to HuggingFace Hub instead.
+results/
+merged_model/
+checkpoints/
+*.bin
+*.safetensors
+*.pt
+*.pth
+
+# --- Dataset Cache ---
+# HuggingFace datasets downloads to ~/.cache by default,
+# but processed data may be saved locally.
+data/processed/
+*.arrow
+*.cache
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- Jupyter Notebooks (Colab) ---
+.ipynb_checkpoints/
+*.ipynb
+
+# --- Environment ---
+.env
+.venv/
+env/
+venv/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Logs & Temp ---
+*.log
+wandb/
+runs/
+lightning_logs/
+
+# --- Generated Plots (optional: you may want to track these) ---
+# Uncomment the next line if you want to keep plots out of git:
+# results/*.png
