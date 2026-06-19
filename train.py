@@ -199,9 +199,21 @@ def load_model_and_tokenizer(
         model_name,
         quantization_config=bnb_config,
         device_map="auto",
+        torch_dtype=torch.float16,  # Force float16 for non-quantized layers
         # trust_remote_code=False by default — Mistral doesn't need it,
         # and enabling it is a security risk with untrusted models.
     )
+
+    # CRITICAL: Force-cast any remaining bfloat16 parameters to float16.
+    # WHY: Mistral 7B on HuggingFace stores weights in bf16. Under 4-bit
+    # quantization, most weights are stored as int4, but non-quantized
+    # parameters (layer norms, embeddings, lm_head) keep their original
+    # dtype. If that's bf16, the gradient scaler (which only works with
+    # fp16/fp32) will crash on T4 with:
+    #   NotImplementedError: '_use_fused...' not implemented for 'BFloat16'
+    for name, param in model.named_parameters():
+        if param.dtype == torch.bfloat16:
+            param.data = param.data.to(torch.float16)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
