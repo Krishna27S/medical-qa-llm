@@ -7,13 +7,14 @@ quantization + Low-Rank Adaptation).  The entire training loop is configured
 through config.yaml — no hyperparameters are hardcoded in this file.
 
 KEY DESIGN DECISIONS:
-  1. QLoRA over full fine-tuning: Mistral 7B in fp16 ≈ 14 GB VRAM.  With
-     optimizer states and activations a T4 (16 GB) cannot fit it.  QLoRA
-     compresses the base model to ~4 GB, and only ~20 M LoRA parameters
-     are trained in fp16.
-  2. fp16 (NOT bf16): The T4 GPU (Turing, compute capability 7.5) has native
-     fp16 tensor cores but NO hardware bf16 support.  Using bf16 on T4
-     triggers slow software emulation and can produce silent numerical errors.
+   1. QLoRA over full fine-tuning: Mistral 7B in fp16 ≈ 14 GB VRAM.  With
+      optimizer states and activations a T4 (16 GB) cannot fit it.  QLoRA
+      compresses the base model to ~4 GB, and only ~20 M LoRA parameters
+      are trained in fp32 (small enough to fit easily).
+   2. NO mixed precision (fp16=False, bf16=False): Mistral 7B stores weights
+      in bf16 on HuggingFace. The PyTorch gradient scaler (used with fp16)
+      crashes on bf16 tensors. Since QLoRA already compresses the model to
+      ~4 GB, mixed precision training is redundant for memory savings.
   3. Gradient checkpointing: Trades ~20 % wall-clock time for ~40 % VRAM
      savings.  Without it the backward pass OOMs on T4.
   4. SFTTrainer from trl: Purpose-built for supervised fine-tuning of causal
@@ -200,20 +201,25 @@ def load_model_and_tokenizer(
         quantization_config=bnb_config,
         device_map="auto",
         torch_dtype=torch.float16,  # Force float16 for non-quantized layers
-        # trust_remote_code=False by default — Mistral doesn't need it,
-        # and enabling it is a security risk with untrusted models.
     )
 
-    # CRITICAL: Force-cast any remaining bfloat16 parameters to float16.
+    # CRITICAL: Force-cast ALL remaining bfloat16 tensors to float16.
     # WHY: Mistral 7B on HuggingFace stores weights in bf16. Under 4-bit
-    # quantization, most weights are stored as int4, but non-quantized
-    # parameters (layer norms, embeddings, lm_head) keep their original
-    # dtype. If that's bf16, the gradient scaler (which only works with
-    # fp16/fp32) will crash on T4 with:
-    #   NotImplementedError: '_use_fused...' not implemented for 'BFloat16'
+    # quantization, most weights become int4, but non-quantized parts
+    # (layer norms, embeddings, lm_head) keep bf16. Even with fp16=False
+    # in training, some internal operations may choke on mixed bf16/fp16.
+    # Belt-and-suspenders: cast everything that's bf16 to fp16.
+    bf16_count = 0
     for name, param in model.named_parameters():
         if param.dtype == torch.bfloat16:
             param.data = param.data.to(torch.float16)
+            bf16_count += 1
+    for name, buf in model.named_buffers():
+        if buf.dtype == torch.bfloat16:
+            buf.data = buf.data.to(torch.float16)
+            bf16_count += 1
+    if bf16_count > 0:
+        logger.info(f"Cast {bf16_count} bf16 tensors to fp16 (T4 compatibility)")
 
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -395,7 +401,11 @@ def create_training_args(
         Commit it to git alongside your results for full reproducibility.
 
     T4-SPECIFIC CONSTRAINTS enforced here:
-      - fp16=True, bf16=False: T4 has fp16 tensor cores, no bf16 hardware.
+      - fp16=False, bf16=False: Disables PyTorch's GradScaler entirely.
+        WHY: Mistral 7B weights are stored in bf16 on HuggingFace. Even after
+        casting to fp16, some internal ops produce bf16 gradients that crash
+        the GradScaler. Since QLoRA already compresses the model to ~4 GB,
+        mixed-precision training is redundant for memory savings.
       - gradient_checkpointing=True: Essential on 16 GB VRAM.
       - optim="paged_adamw_32bit": Offloads optimizer states to CPU during
         memory spikes, preventing OOM during gradient accumulation.
@@ -435,9 +445,11 @@ def create_training_args(
         max_grad_norm=config.get("max_grad_norm", 0.3),
 
         # --- Precision ---
-        # T4 (Turing, CC 7.5): fp16=True, bf16=False.  NEVER use bf16 on T4.
-        fp16=config.get("fp16", True),
-        bf16=config.get("bf16", False),
+        # CRITICAL: Both set to False to disable PyTorch's GradScaler.
+        # Mistral 7B has bf16 weights that crash the GradScaler on T4.
+        # QLoRA already handles memory — mixed precision is not needed.
+        fp16=False,
+        bf16=False,
 
         # --- Memory Optimisation ---
         # Gradient checkpointing: ~20% slower but ~40% less VRAM.
@@ -512,9 +524,7 @@ def create_trainer(
     # WHY SFTConfig instead of TrainingArguments:
     #   - trl v0.14+ unified training config into SFTConfig (extends TrainingArguments).
     #   - SFTConfig includes dataset_text_field, max_seq_length, packing directly.
-    #   - We construct it explicitly (not from to_dict()) to guarantee fp16/bf16
-    #     are set correctly. The to_dict() approach was silently dropping these,
-    #     causing BFloat16 errors on T4 GPUs.
+    #   - We construct it explicitly with every parameter to avoid silent defaults.
     try:
         from trl import SFTConfig
 
@@ -529,8 +539,8 @@ def create_trainer(
             weight_decay=training_args.weight_decay,
             max_grad_norm=training_args.max_grad_norm,
             optim=training_args.optim,
-            # CRITICAL: T4 GPU settings — must be explicit
-            fp16=True,
+            # CRITICAL: Both False — disables GradScaler completely.
+            fp16=False,
             bf16=False,
             gradient_checkpointing=training_args.gradient_checkpointing,
             gradient_checkpointing_kwargs={"use_reentrant": False},
