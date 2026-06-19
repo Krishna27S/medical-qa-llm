@@ -497,21 +497,48 @@ def create_trainer(
     Returns:
         Configured SFTTrainer ready for .train().
     """
-    # WHY try/except for SFTTrainer:
-    #   - trl v0.14+ renamed 'tokenizer' to 'processing_class' and moved
-    #     'dataset_text_field' into SFTConfig. Older versions use the original API.
-    #   - This pattern supports both, so the code works regardless of trl version.
+    # WHY SFTConfig instead of TrainingArguments:
+    #   - trl v0.14+ unified training config into SFTConfig (extends TrainingArguments).
+    #   - SFTConfig includes dataset_text_field, max_seq_length, packing directly.
+    #   - We construct it explicitly (not from to_dict()) to guarantee fp16/bf16
+    #     are set correctly. The to_dict() approach was silently dropping these,
+    #     causing BFloat16 errors on T4 GPUs.
     try:
-        # New API (trl >= 0.14): uses processing_class, no dataset_text_field in constructor
         from trl import SFTConfig
 
         sft_config = SFTConfig(
-            **{k: v for k, v in training_args.to_dict().items()
-               if k in SFTConfig.__dataclass_fields__},
+            output_dir=training_args.output_dir,
+            num_train_epochs=training_args.num_train_epochs,
+            per_device_train_batch_size=training_args.per_device_train_batch_size,
+            gradient_accumulation_steps=training_args.gradient_accumulation_steps,
+            learning_rate=training_args.learning_rate,
+            lr_scheduler_type=training_args.lr_scheduler_type,
+            warmup_ratio=training_args.warmup_ratio,
+            weight_decay=training_args.weight_decay,
+            max_grad_norm=training_args.max_grad_norm,
+            optim=training_args.optim,
+            # CRITICAL: T4 GPU settings — must be explicit
+            fp16=True,
+            bf16=False,
+            gradient_checkpointing=training_args.gradient_checkpointing,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+            logging_steps=training_args.logging_steps,
+            logging_first_step=True,
+            save_strategy=training_args.save_strategy,
+            report_to="none",
+            seed=training_args.seed,
+            remove_unused_columns=False,
+            # SFTConfig-specific fields
             dataset_text_field="text",
             max_seq_length=config.get("max_seq_length", 512),
             packing=config.get("packing", False),
         )
+
+        # Apply dry-run overrides if they were set
+        if training_args.max_steps > 0:
+            sft_config.max_steps = training_args.max_steps
+            sft_config.logging_steps = 1
+            sft_config.save_strategy = "no"
 
         trainer = SFTTrainer(
             model=model,
@@ -520,28 +547,15 @@ def create_trainer(
             train_dataset=dataset["train"],
             eval_dataset=dataset.get("validation"),
         )
-    except (TypeError, ImportError):
-        # Old API (trl < 0.14): uses tokenizer param and dataset_text_field
-        try:
-            trainer = SFTTrainer(
-                model=model,
-                tokenizer=tokenizer,
-                args=training_args,
-                train_dataset=dataset["train"],
-                eval_dataset=dataset.get("validation"),
-                dataset_text_field="text",
-                max_seq_length=config.get("max_seq_length", 512),
-                packing=config.get("packing", False),
-            )
-        except TypeError:
-            # Fallback: try processing_class with TrainingArguments
-            trainer = SFTTrainer(
-                model=model,
-                processing_class=tokenizer,
-                args=training_args,
-                train_dataset=dataset["train"],
-                eval_dataset=dataset.get("validation"),
-            )
+    except (ImportError, TypeError):
+        # Fallback for older trl versions
+        trainer = SFTTrainer(
+            model=model,
+            processing_class=tokenizer,
+            args=training_args,
+            train_dataset=dataset["train"],
+            eval_dataset=dataset.get("validation"),
+        )
 
     # Estimate training time
     _log_training_estimate(dataset, config, training_args)
