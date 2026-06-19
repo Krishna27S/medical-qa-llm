@@ -497,16 +497,51 @@ def create_trainer(
     Returns:
         Configured SFTTrainer ready for .train().
     """
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        args=training_args,
-        train_dataset=dataset["train"],
-        eval_dataset=dataset.get("validation"),
-        dataset_text_field="text",
-        max_seq_length=config.get("max_seq_length", 512),
-        packing=config.get("packing", False),
-    )
+    # WHY try/except for SFTTrainer:
+    #   - trl v0.14+ renamed 'tokenizer' to 'processing_class' and moved
+    #     'dataset_text_field' into SFTConfig. Older versions use the original API.
+    #   - This pattern supports both, so the code works regardless of trl version.
+    try:
+        # New API (trl >= 0.14): uses processing_class, no dataset_text_field in constructor
+        from trl import SFTConfig
+
+        sft_config = SFTConfig(
+            **{k: v for k, v in training_args.to_dict().items()
+               if k in SFTConfig.__dataclass_fields__},
+            dataset_text_field="text",
+            max_seq_length=config.get("max_seq_length", 512),
+            packing=config.get("packing", False),
+        )
+
+        trainer = SFTTrainer(
+            model=model,
+            processing_class=tokenizer,
+            args=sft_config,
+            train_dataset=dataset["train"],
+            eval_dataset=dataset.get("validation"),
+        )
+    except (TypeError, ImportError):
+        # Old API (trl < 0.14): uses tokenizer param and dataset_text_field
+        try:
+            trainer = SFTTrainer(
+                model=model,
+                tokenizer=tokenizer,
+                args=training_args,
+                train_dataset=dataset["train"],
+                eval_dataset=dataset.get("validation"),
+                dataset_text_field="text",
+                max_seq_length=config.get("max_seq_length", 512),
+                packing=config.get("packing", False),
+            )
+        except TypeError:
+            # Fallback: try processing_class with TrainingArguments
+            trainer = SFTTrainer(
+                model=model,
+                processing_class=tokenizer,
+                args=training_args,
+                train_dataset=dataset["train"],
+                eval_dataset=dataset.get("validation"),
+            )
 
     # Estimate training time
     _log_training_estimate(dataset, config, training_args)
