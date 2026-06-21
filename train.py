@@ -737,6 +737,17 @@ def main() -> None:
     # ----- Step 5: Load Dataset -----
     dataset = load_processed_dataset(args.data_dir)
 
+    # Optional: limit training samples for faster training
+    # WHY: On free Colab T4, full 28K dataset takes ~3 hours and often
+    # exceeds the GPU time limit. 5000 samples trains in ~30 minutes
+    # and still shows clear improvement over baseline for a portfolio project.
+    max_train_samples = config.get("max_train_samples", None)
+    if max_train_samples and max_train_samples < len(dataset["train"]):
+        dataset["train"] = dataset["train"].select(range(max_train_samples))
+        logger.info(f"⚡ Limiting training to {max_train_samples} samples (from config)")
+    else:
+        logger.info(f"Training on full dataset: {len(dataset['train'])} samples")
+
     # ----- Step 6: Create Trainer -----
     training_args = create_training_args(config, dry_run=args.dry_run)
     trainer = create_trainer(model, tokenizer, training_args, dataset, config)
