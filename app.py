@@ -518,7 +518,7 @@ def build_interface(config: Dict[str, Any]) -> gr.Blocks:
         font=gr.themes.GoogleFont("Inter"),
     )
 
-    with gr.Blocks(theme=theme) as demo:
+    with gr.Blocks() as demo:
         # --- Header ---
         gr.Markdown(f"# {app_title}")
         gr.Markdown(f"*{app_description}*")
@@ -728,10 +728,10 @@ def main() -> None:
     logger.info("=" * 60)
 
     demo.launch(
-        server_name="0.0.0.0",  # Accept connections from any IP (needed for Spaces/Colab)
+        server_name="0.0.0.0",
         server_port=args.port,
         share=args.share,
-        title=config.get("app_title", "Medical Q&A Assistant"),
+        # Note: title/theme params removed in Gradio 6.0 — title set via gr.Markdown above
     )
 
 
