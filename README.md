@@ -297,7 +297,7 @@ Where:
 
 > **TODO**: Deploy to HuggingFace Spaces and update this link.
 
-🔗 **[Try the Live Demo on HuggingFace Spaces](https://huggingface.co/spaces/YOUR_USERNAME/medical-qa-mistral)**
+🔗 **[Try the Live Demo on HuggingFace Spaces](https://huggingface.co/spaces/Krishna27s/medical-qa-mistral)**
 
 The demo runs on [HuggingFace Spaces](https://huggingface.co/spaces) with CPU inference (slower but free).
 
